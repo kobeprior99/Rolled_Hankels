@@ -18,7 +18,7 @@ close all;
 total_timer = tic;
 
 % threshold for truncating eigenvalues of SVD for system order
-threshold = 1e-9;
+threshold = 1e-3;
 
 % timestep
 dt = 1e-4;
@@ -51,7 +51,7 @@ timer = tic;
 
 sys_original_discrete = c2d(sys_original, dt);
 
-N = 1000;
+N = 100;
 t = (0:N-1)' * dt;
 [h,t] = impulse(sys_original_discrete,t);
 

@@ -1,0 +1,220 @@
+%% ========================================================================
+%  Project:      RLC Circuit System Identification Using Hankel Matrices
+%
+%  Authors:       Zach, Jake, Riley, Kobe
+%  Date:         November 13, 2026
+%
+%  Description:
+%      Data-driven system identification of a second-order RLC circuit
+%      using Hankel matrices, SVD, and state-space realization.
+%
+%  ========================================================================
+
+clc;
+close all;
+
+% Start total execution timer
+total_timer = tic;
+
+% threshold for truncating eigenvalues of SVD for system order
+threshold = 1e-3;
+
+% timestep
+dt = 1e-4;
+
+%% ========================================================================
+% 1. Define Original System
+% ========================================================================
+
+timer = tic;
+
+R = 10;
+L = .1;
+C = 10e-6;
+
+% Expected SS parameter
+Ac = [0 1; -1/(L*C) -R/L];
+Bc = [0; 1/(L*C)];
+Cc = [1 0];
+Dc = 0;
+
+sys_original = ss(Ac, Bc, Cc, Dc);
+
+fprintf('System definition:       %.6f s\n', toc(timer));
+
+%% ========================================================================
+% 2. Generate Impulse Response
+% ========================================================================
+
+timer = tic;
+
+sys_original_discrete = c2d(sys_original, dt);
+
+N = 100;
+t = (0:N-1)' * dt;
+[h,t] = impulse(sys_original_discrete,t);
+
+% magnitude scaling of impulse response
+h = h * dt;
+
+fprintf('Impulse response:        %.6f s\n', toc(timer));
+fprintf('Number of samples:       %d\n', N);
+
+%% ========================================================================
+% 3. System Identification
+% ========================================================================
+
+timer = tic;
+
+[A_est, B_est, C_est, D_est, order] = ...
+    estimateSS(h, N, threshold);
+
+identification_time = toc(timer);
+
+fprintf('\nTotal identification:     %.6f s\n', ...
+    identification_time);
+
+%% ========================================================================
+% 4. Time-Domain Validation
+% ========================================================================
+
+timer = tic;
+
+% Pass in a unit step for testing
+u = ones(size(t));
+
+sys_est = ss(A_est, B_est, C_est, D_est, dt);
+
+y_original = lsim(sys_original, u, t);
+y_era = lsim(sys_est, u, t);
+
+fprintf('Time-domain simulation:  %.6f s\n', toc(timer));
+
+%% ========================================================================
+% 5. Plotting and Error Metrics
+% ========================================================================
+
+timer = tic;
+
+figure;
+plot(t, y_original, 'LineWidth', 1.5);
+hold on;
+plot(t, y_era, '--', 'LineWidth', 1.5);
+xlabel("Time (s)");
+ylabel('Capacitor Voltage (V)');
+legend('Original RLC', 'ERA estimate');
+
+relative_error = norm(y_original-y_era) / norm(y_original);
+mse = mean((y_original-y_era).^2);
+
+fprintf('Relative Error: %.6e\n', relative_error);
+fprintf('MSE:             %.6e\n', mse);
+
+fprintf('Plotting/metrics:        %.6f s\n', toc(timer));
+
+%% ========================================================================
+% 6. Total Runtime
+% ========================================================================
+
+fprintf('\n========================================\n');
+fprintf('TOTAL EXECUTION TIME: %.6f s\n', toc(total_timer));
+fprintf('========================================\n');
+
+
+%% ========================================================================
+% SYSTEM IDENTIFICATION FUNCTION
+% ========================================================================
+
+function [A_d, B_d, C_d, D_d, order] = estimateSS(h, N, threshold)
+
+    fprintf('\n--- SYSTEM IDENTIFICATION TIMING ---\n');
+
+    %% Hankel Matrix Construction
+
+    timer = tic;
+
+    [H0, H1] = hankelfy(h, N);
+
+    hankel_time = toc(timer);
+
+    fprintf('Hankel construction:     %.6f s\n', hankel_time);
+    fprintf('Hankel dimensions:       %d x %d\n', size(H0,1), size(H0,2));
+
+    %% Full SVD
+
+    timer = tic;
+
+    [~, S1, ~] = svd(H0, 'econ');
+
+    full_svd_time = toc(timer);
+
+    fprintf('Full SVD:                %.6f s\n', full_svd_time);
+
+    %% Model Order Selection
+
+    timer = tic;
+
+    singular_values = diag(S1);
+    order = sum(singular_values > threshold);
+
+    order_time = toc(timer);
+
+    fprintf('Model order selection:   %.6f s\n', order_time);
+    fprintf('Estimated order:         %d\n', order);
+
+    %% Truncated SVD
+
+    timer = tic;
+
+    % Jake: we could probably save time here by just using U,S,V from the
+    % first SVD and then truncating from there
+    [U2, S2, V2] = svds(H0, order); 
+
+    truncated_svd_time = toc(timer);
+
+    fprintf('Truncated SVD:           %.6f s\n', truncated_svd_time);
+
+    %% State-Space Realization
+
+    timer = tic;
+
+    sqrt_S = sqrt(S2);
+
+    % Calculate C and O parameters
+    C = sqrt_S * V2';
+    O = U2 * sqrt_S;
+
+    A_d = (sqrt_S \ (U2' * H1 * V2)) / sqrt_S;
+
+    B_d = C(:,1);
+    C_d = O(1,:);
+    D_d = h(1);
+
+    realization_time = toc(timer);
+
+    fprintf('State-space realization: %.6f s\n', realization_time);
+
+    %% Identification Summary
+
+    fprintf('\n--- IDENTIFICATION SUMMARY ---\n');
+    fprintf('Hankel construction:     %.2f %%\n', 100*hankel_time/(hankel_time+full_svd_time+order_time+truncated_svd_time+realization_time));
+    fprintf('Full SVD:                %.2f %%\n', 100*full_svd_time/(hankel_time+full_svd_time+order_time+truncated_svd_time+realization_time));
+    fprintf('Order selection:         %.2f %%\n', 100*order_time/(hankel_time+full_svd_time+order_time+truncated_svd_time+realization_time));
+    fprintf('Truncated SVD:           %.2f %%\n', 100*truncated_svd_time/(hankel_time+full_svd_time+order_time+truncated_svd_time+realization_time));
+    fprintf('Realization:             %.2f %%\n', 100*realization_time/(hankel_time+full_svd_time+order_time+truncated_svd_time+realization_time));
+
+end
+
+
+%% ========================================================================
+% HANKEL MATRIX CONSTRUCTION
+% ========================================================================
+
+function [H0, H1] = hankelfy(h, N)
+
+    n = floor((N-1)/2);
+
+    H0 = hankel(h(2:n+1), h(n+1:2*n));
+    H1 = hankel(h(3:n+2), h(n+2:2*n+1));
+
+end

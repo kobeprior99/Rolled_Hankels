@@ -144,7 +144,7 @@ function [A_d, B_d, C_d, D_d, order] = estimateSS(h, N, threshold)
 
     timer = tic;
 
-    [~, S1, ~] = svd(H0, 'econ');
+    [U1, S1, V1] = svd(H0, 'econ');
 
     full_svd_time = toc(timer);
 
@@ -166,7 +166,14 @@ function [A_d, B_d, C_d, D_d, order] = estimateSS(h, N, threshold)
 
     timer = tic;
 
-    [U2, S2, V2] = svds(H0, order);
+    % Jake: we could probably save time here by just using U,S,V from the
+    % first SVD and then truncating from there
+    % [U2, S2, V2] = svds(H0, order); 
+
+    % Truncating by hand
+    U2 = U1(:,1:order);
+    S2 = S1(1:order,1:order);
+    V2 = V1(:,1:order);
 
     truncated_svd_time = toc(timer);
 
